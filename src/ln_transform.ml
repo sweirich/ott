@@ -900,7 +900,7 @@ let pp_close_prod m xd mvr wrt (ov:string) (rule_ntr_name:nontermroot) (p:prod) 
             | Split_bound fvar -> 
               ("\n       if (lt_dec " ^ mv_s ^ " k) \n"
                ^ "         then " ^ s ^ " " ^ mv_s ^ "\n"    (* s is Var_b constructor *)
-               ^ "         else " ^ fvar ^ " " ^ ov, [])     (* sf is Var_f constructor *)
+               ^ "         else " ^ s ^ " (S " ^ mv_s ^ ")", [])     (* sf is Var_f constructor *)
             | Split_free bvar -> 
               ( "if (" ^ov ^" === "^mv_s^") then (" ^ bvar ^ " k) else (" ^ s ^ " "^mv_s^")" , [] )
           else
