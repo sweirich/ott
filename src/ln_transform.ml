@@ -79,6 +79,12 @@ let open_name xd (b:bool) (ntr:nontermroot) (wrt_ntr:nontermroot) =
   let pwrt_ntr = Auxl.promote_ntr xd wrt_ntr in
   "open_"^pntr^"_wrt_"^pwrt_ntr^(if b then "_rec" else "")
 
+let close_name xd (b:bool) (ntr:nontermroot) (wrt_ntr:nontermroot) = 
+  let pntr = Auxl.promote_ntr xd ntr in
+  let pwrt_ntr = Auxl.promote_ntr xd wrt_ntr in
+  "close_"^pntr^"_wrt_"^pwrt_ntr^(if b then "_rec" else "")
+
+
 let arity_name f ntr = 
   "arity_"^f^"_"^ntr
 
@@ -279,7 +285,9 @@ let ln_transform_rule (m:pp_mode) (xd:syntaxdefn) (r:rule) : rule =
 		      if bound_by_auxfn xd mvr
 		      then [ Lang_metavar ("nat",("nat",[Si_num "1"])); Lang_metavar ("nat",("nat",[Si_num "2"])) ]
 		      else [ Lang_metavar ("nat",("nat",[])) ];
-		    prod_homs = ("coq-ln_splitted",[Hom_string mvr])::p.prod_homs;  
+		    prod_homs = ("coq-ln_splitted",[Hom_string mvr;
+                                                    Hom_string "bound";
+                                                    Hom_string (p.prod_name^"_f")])::p.prod_homs;  
                     prod_disambiguate = None;
 		    prod_bs = [];                                                   
 		    prod_loc = p.prod_loc };
@@ -289,7 +297,9 @@ let ln_transform_rule (m:pp_mode) (xd:syntaxdefn) (r:rule) : rule =
 		    prod_sugar = p.prod_sugar;
 		    prod_categories = p.prod_categories;
 		    prod_es = p.prod_es;
-		    prod_homs = p.prod_homs;                           
+		    prod_homs = ("coq-ln_splitted",[Hom_string mvr;
+                                                    Hom_string "free";
+                                                    Hom_string (p.prod_name^"_b")])::p.prod_homs;                           
                     prod_disambiguate = None;
 		    prod_bs = [];                                      
 		    prod_loc = p.prod_loc } ] 
@@ -657,7 +667,7 @@ let pp_open_prod m xd mvr wrt (ov:string) (rule_ntr_name:nontermroot) (p:prod) :
   let splits = 
     try 
       match List.assoc "coq-ln_splitted" p.prod_homs with
-      | [(Hom_string mvr1)] -> String.compare mvr mvr1 = 0
+      | [Hom_string mvr1;Hom_string "bound";_] -> String.compare mvr mvr1 = 0
       | _ -> false 
     with Not_found -> false in
 
@@ -779,6 +789,225 @@ let pp_open m xd : int_funcs_collapsed =
 	  i_funcs_proof = None }
 
   | _ -> Auxl.warning None "internal: pp_open implemented only for Coq\n"; []
+
+
+(* ******************************************************************** *)
+(* close                                                                *)
+(* ******************************************************************** *)
+
+let rec pp_close_symterm_element m xd mvr wrt s unshifted_nonterms ov sie de (ste:symterm_element) = 
+  match ste with
+  | Ste_st(_,st) -> 
+      (pp_close_symterm m xd mvr wrt s unshifted_nonterms ov sie de st)
+  | Ste_metavar (l,mvrp,mv) -> 
+      let mv_s = Grammar_pp.pp_metavar_with_de_with_sie m xd sie de mv in
+      ( mv_s, [] )
+  | Ste_var (l,mvrp,var) -> 
+      raise ThisCannotHappen (* never occurs in a canonical symterm_element *)
+  | Ste_list (l,stlis) -> 
+      ( match stlis with 
+      | [Stli_listform stlb] -> 
+	  pp_close_symterm_list_body 
+	    m xd mvr wrt s unshifted_nonterms ov sie de stlb
+      | _-> 
+	  raise ThisCannotHappen (*never occurs in a canonical symterm_element*) )
+
+and pp_close_symterm m xd mvr wrt s unshifted_nonterms ov sie de (st:symterm) =
+  match st with
+  | St_node (l,stnb) -> 
+      raise ThisCannotHappen (* never occurs in a canonical symterm_element *)
+  | St_nonterm (l,ntrp,nt) ->
+      let nt_s = Grammar_pp.pp_nonterm_with_de_with_sie m xd sie de nt in
+      if depend_on_splitted m xd ntrp mvr 
+      then 
+	let id_call = close_name xd true ntrp wrt in
+	let sk = 
+	  if List.mem nt unshifted_nonterms 
+	  then " (S k) "
+	  else " k " in 
+	( "(" ^  id_call ^ sk ^ ov ^ " " ^ nt_s ^")", [ id_call ] )
+      else
+	( nt_s, [] )
+  | St_nontermsub (l,ntrpl,ntrpt,nt)  -> 
+      raise ThisCannotHappen  (* never occurs in a canonical symterm_element *)
+  | St_uninterpreted (p,s) -> 
+      raise ThisCannotHappen (* never occurs in a canonical symterm_element *)
+
+and pp_close_symterm_list_body m xd mvr wrt s unshifted_nonterms ov sie de stlb =
+  let (de1,de2)=de in
+  let de1i = Grammar_pp.de1_lookup de1 stlb.stl_bound in
+
+  let pp_body_tmp, list_funcs = 
+    List.split
+      (List.map 
+	 (pp_close_symterm_element m xd mvr wrt s unshifted_nonterms ov ((Si_var ("_",0))::sie) de)
+	 stlb.stl_elements) in
+  
+  let pp_body = 
+    let tmp = String.concat "," pp_body_tmp in
+    if (List.length stlb.stl_elements) > 1 then "("^tmp^")" else tmp in
+
+  match m with
+  | Coq co when not co.coq_expand_lists ->
+      let l = Str.split (Str.regexp "(\\|,\\|)") de1i.de1_pattern in
+      if List.length l = 1 then	
+        ( "(map (fun ("^de1i.de1_pattern^":" ^ de1i.de1_coq_type_of_pattern ^ ") => "^pp_body^") "
+          ^ de1i.de1_compound_id
+          ^ ")", List.concat list_funcs )
+      else
+        ( "(map (fun (pat_:" ^ de1i.de1_coq_type_of_pattern ^ ") => match pat_ with " (* FZ freshen pat_ *)
+	  ^ de1i.de1_pattern^" => " ^pp_body^" end) "  
+          ^ de1i.de1_compound_id
+          ^ ")", List.concat list_funcs )
+  | _ -> ("<<internal: only Coq + native lists supported>>",[])
+
+
+type split = Split_bound of string | Split_free of string 
+
+(* mvr : the mvr with respect to we are closing - is bindable in rule wrt *)
+(* ov : variable used to abstract mvr *)
+let pp_close_prod m xd mvr wrt (ov:string) (rule_ntr_name:nontermroot) (p:prod) : nontermroot list * (string * string * string) * int_func list =
+
+  let lhs_stnb = Grammar_pp.canonical_symterm_node_body_of_prod rule_ntr_name p in
+  let lhs_st = St_node(dummy_loc,lhs_stnb) in
+  let sie = [] in
+  let ((de1,de2) as de,de3,pptbe) = Bounds.bound_extraction m xd dummy_loc [lhs_st] in
+  (* print_endline ("lhs**"^(Grammar_pp.pp_plain_symterm lhs_st)); FZ *)
+  let lhs = Grammar_pp.pp_symterm m xd sie de lhs_st in
+
+  (* we distinguish the case of the prod that splits mvr *)  
+  let split = 
+    try 
+      match List.assoc "coq-ln_splitted" p.prod_homs with
+      | [Hom_string mvr1; Hom_string "bound"; Hom_string var] -> 
+         if String.compare mvr mvr1 = 0 then Some (Split_bound var) else None
+      | [Hom_string mvr1; Hom_string "free"; Hom_string var] -> 
+         if String.compare mvr mvr1 = 0 then Some (Split_free var) else None
+      | _ -> None
+    with Not_found -> None in
+      
+
+  let (rhs,deps) = 
+    match split with 
+    | Some sv ->
+      (* we distinguish the case auxfns from the simpler one *)
+      begin match lhs_stnb.st_es with
+      | [ Ste_metavar (_,mvr,mv) ] ->
+	  let s = lhs_stnb.st_prod_name in
+	  let mv_s = Grammar_pp.pp_metavar_with_de_with_sie m xd sie de mv in
+          if Auxl.is_lngen m then
+            match sv with 
+            | Split_bound fvar -> 
+              ("\n       if (lt_dec " ^ mv_s ^ " k) \n"
+               ^ "         then " ^ s ^ " " ^ mv_s ^ "\n"    (* s is Var_b constructor *)
+               ^ "         else " ^ fvar ^ " " ^ ov, [])     (* sf is Var_f constructor *)
+            | Split_free bvar -> 
+              ( "if (" ^ov ^" === "^mv_s^") then (" ^ bvar ^ " k) else (" ^ s ^ " "^mv_s^")" , [] )
+          else
+            ( "if (k === "^mv_s^") then "^ov^" else (" ^ s^ " "^mv_s^")" , [] )
+      | [ Ste_metavar (_,mvr1,mv1); Ste_metavar (_,mvr2,mv2); ] ->
+	  let s = lhs_stnb.st_prod_name in
+	  let mv1_s = Grammar_pp.pp_metavar_with_de_with_sie m xd sie de mv1 in
+	  let mv2_s = Grammar_pp.pp_metavar_with_de_with_sie m xd sie de mv2 in
+	  ( "if (k === "^mv1_s^") then (List.nth "^mv2_s^" "^ov^" "^"("^p.prod_name^" 0 0)"^") else (" 
+            ^ s^ " "^mv1_s^" "^mv2_s^")" , [] )
+      | _ -> Auxl.error (Some (lhs_stnb.st_loc)) "internal: weird lhs_stnb in pp_close_prod\n"       
+      end
+    | None -> 
+      let unshifted_nonterms = 
+	Auxl.option_map
+	  ( fun bs -> 
+	    match bs with 
+	    | Bind (loc, MetaVarExp (mvr1,_),nt) -> 
+		let mvr1 = Auxl.primary_mvr_of_mvr xd mvr1 in
+		if (String.compare mvr mvr1 = 0) then Some nt else None
+	    | _ -> None )
+	  p.prod_bs in
+      let pp_body, deps = 
+	(fun (body,deps) -> (String.concat " " body, List.concat deps))
+	  (List.split
+	     (List.map 
+		(pp_close_symterm_element m xd mvr wrt (lhs_stnb.st_prod_name) unshifted_nonterms ov ((Si_var ("_",0))::sie) de) 
+		lhs_stnb.st_es)) in
+      (lhs_stnb.st_prod_name ^ " " ^ pp_body, deps) in
+    
+  (deps,("",lhs,rhs),[])
+
+let pp_close_rule m xd (r:rule) (wrt:nontermroot) (mvr:metavarroot)  : int_func list =
+  (* invariant: mvr must be bindable in wrt *)
+  ln_debug ("close_rule, rule = "^r.rule_ntr_name^"*** wrt = "^wrt^"*** mvr = "^mvr); 
+
+  let nts_used = Context_pp.nts_used_in_lhss m xd r in
+  let rule_var_1 = Auxl.fresh_nt nts_used (Auxl.secondary_ntr xd wrt, []) in 
+  let rule_var_2 = Auxl.fresh_nt (rule_var_1::nts_used) (Auxl.secondary_ntr xd r.rule_ntr_name, []) in
+
+  let prods = List.filter (fun p -> not p.prod_meta) r.rule_ps in
+  let close_prods = 
+    List.map (pp_close_prod m xd mvr wrt (Grammar_pp.pp_nonterm m xd rule_var_1) r.rule_ntr_name) prods in
+
+  let clauses = List.map (fun (_,s,_) -> s) close_prods in
+  let funcs = List.flatten (List.map (fun (_,_,f) -> f) close_prods) in
+  let dep = List.flatten (List.map (fun (d,_,_) -> d) close_prods) in
+
+  let id_rec = close_name xd true r.rule_ntr_name wrt in
+  let id = close_name xd false r.rule_ntr_name wrt in
+
+  let header =
+    ( id_rec
+      ^ " (k:nat)"         (* FZ freshen k *)
+      ^ " (" ^ Grammar_pp.pp_nonterm m xd rule_var_1
+      ^ ":" ^ (if bound_by_auxfn xd mvr then "list " else "") ^ "var"
+      ^ ") (" ^ Grammar_pp.pp_nonterm m xd rule_var_2
+      ^ ":" ^ Grammar_pp.pp_nontermroot_ty m xd r.rule_ntr_name 
+      ^ ") "
+      ^ (if List.mem id_rec dep then "{struct "^Grammar_pp.pp_nonterm m xd rule_var_2^"}" else "") ,
+      "",
+      ": " ^ Grammar_pp.pp_nontermroot_ty m xd r.rule_ntr_name 
+      ^ " :=\n  match " ^ Grammar_pp.pp_nonterm m xd rule_var_2 ^ " with\n" ) in
+  let added_deps = List.map (fun x -> x.r_fun_id) funcs in
+
+  { r_fun_id = id_rec;
+    r_fun_dep = dep @ added_deps;
+    r_fun_type = r.rule_ntr_name;
+    r_fun_header = header;
+    r_fun_clauses = clauses } :: 
+  { r_fun_id = id;
+    r_fun_dep = [ id_rec ];
+    r_fun_type = r.rule_ntr_name;
+    r_fun_header = 
+      ( id ^" "^ Grammar_pp.pp_nonterm m xd rule_var_2 ^" "^ Grammar_pp.pp_nonterm m xd rule_var_1 
+         ^" := " ^ id_rec ^" 0 "^ Grammar_pp.pp_nonterm m xd rule_var_2
+         ^" "^ Grammar_pp.pp_nonterm m xd rule_var_1,
+         "", "");
+    r_fun_clauses = [] }
+  :: funcs
+
+let pp_close m xd : int_funcs_collapsed =
+  match m with
+  | Coq _ ->
+      (* collect all the pairs mvr - rule such that mvr was splitted in rule *)
+      let all_bindable_mvr_rule = all_rules_with_bindable_mvr xd in
+      (* for each rule r, if r depends on a rule ntr with a splitted mvr, generate close r wrt ntr *)
+      let ifuncs =
+	List.concat (List.map 
+	  (fun r ->
+	    if defined_rule m r then 
+	      let accessible_rules = ntmvrlist_to_ntrlist (List.assoc (Ntr r.rule_ntr_name) (Auxl.select_dep_graph m xd.xd_dep)) in
+	      List.concat (Auxl.option_map 
+		(fun (mvr,ntr) -> 
+		  if List.mem ntr accessible_rules
+		  then Some (pp_close_rule m xd r ntr mvr)
+		  else None)
+		all_bindable_mvr_rule)
+	    else [])
+	  xd.xd_rs) in
+
+      Dependency.collapse m xd 
+	{ i_funcs = ifuncs;
+	  i_funcs_proof = None }
+
+  | _ -> Auxl.warning None "internal: pp_close implemented only for Coq\n"; []
+
 
 (* ******************************************************************** *)
 (* lc (locally closed)                                                  *)
@@ -979,8 +1208,10 @@ let pp_lcs fd m xd : unit =
 
   let lcs_drule_from_prod r p =
     try 
-      let _ = List.assoc "coq-ln_splitted" p.prod_homs 
-      in None
+      (* don't at lc constructor for bound variables *)
+      match List.assoc "coq-ln_splitted" p.prod_homs with
+      | [_ ; Hom_string "bound" ; _ ] -> None
+      | _ -> raise Not_found
     with Not_found -> 
       let premises = make_premises r p in
 
@@ -1758,7 +1989,7 @@ Tactic Notation \"apply_fresh\" \"*\" constr(T) \"as\" ident(x) :=
     let h = hints_rel @ hints_lc in
     if List.length h = 0 
     then ""
-    else "Hint Constructors "^(String.concat " " h)^" : core.\n" in
+    else "#[export] Hint Constructors "^(String.concat " " h)^" : core.\n" in
 
   (* ** all together *)
   "\n(** infrastructure *)\n" 

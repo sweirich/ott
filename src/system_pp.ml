@@ -65,6 +65,7 @@ let pp_auxiliary_lemmas m xd =
 
 let pp_functions_locally_nameless fd m sd xd_transformed =
   let funcs_open = Ln_transform.pp_open m xd_transformed in
+  let funcs_close = Ln_transform.pp_close m xd_transformed in
   let funcs_subrules = Subrules_pp.pp_subrules m xd_transformed xd_transformed.xd_srs in
   (* let auxfns = Substs_pp.pp_auxfns m sd.syntax in *)
   let arities = Ln_transform.pp_arities m sd.syntax xd_transformed in
@@ -95,6 +96,8 @@ let pp_functions_locally_nameless fd m sd xd_transformed =
   output_string fd (Dependency.compute m sd.syntax arities);
   output_string fd (Auxl.big_line_comment m "opening up abstractions");
   output_string fd (Dependency.compute m xd_transformed funcs_open);
+  output_string fd (Auxl.big_line_comment m "closing up abstractions");
+  output_string fd (Dependency.compute m xd_transformed funcs_close);
   output_string fd (Auxl.big_line_comment m "terms are locally-closed pre-terms");
   Ln_transform.pp_lcs fd m xd_transformed;
 (*   output_string fd (Auxl.big_line_comment m "auxiliary functions"); *)
